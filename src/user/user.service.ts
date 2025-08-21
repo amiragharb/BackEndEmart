@@ -15,6 +15,8 @@ import { LoginDto } from './dto/login.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ConnectionPool, IResult } from 'mssql';
 import * as sql from 'mssql';
+import path from 'path';
+import nodemailer from "nodemailer";
 
 type SqlUser = {
   UserID: number;
@@ -426,7 +428,7 @@ export class UserService {
 
 
   // -------------------- FORGET / VERIFY TEMP PASSWORD --------------------
-  // (meilleure pratique : ne pas remplacer le vrai password ici ; on pose un tempPassword hashé)
+  /* (meilleure pratique : ne pas remplacer le vrai password ici ; on pose un tempPassword hashé)
   async forgetPassword(email: string): Promise<void> {
     const user = await this.findUserByEmail(email);
     if (!user) throw new NotFoundException('User not found');
@@ -485,7 +487,78 @@ if (extras.tempPassword) {
 
 
 
-  }}
+  }}*/
+  
+async forgetPassword(email: string): Promise<void> {
+  const user = await this.findUserByEmail(email);
+  if (!user) throw new NotFoundException("User not found");
+
+  // 1. Generate temporary password + hash
+  const tempPassword = this.generateStrongPassword(10);
+  const tempHash = await bcrypt.hash(tempPassword, 10);
+  const exp = this.nowPlusMinutes(30);
+
+  await this.ensureAuthExtras(user.UserID);
+  await this.db
+    .request()
+    .input("id", sql.Int, user.UserID)
+    .input("tp", sql.NVarChar, tempHash)
+    .input("exp", sql.DateTime2, exp)
+    .query(`
+      UPDATE dbo.UserAuthExtras
+      SET tempPassword=@tp, tempPasswordExpires=@exp, otp=NULL, otpExpires=NULL
+      WHERE UserID=@id;
+    `);
+
+  // 2. Setup Nodemailer (SMTP Gmail ou autre)
+  const transporter = nodemailer.createTransport({
+    service: "gmail", // plus simple
+    auth: {
+      user: "gharbi.miro25@gmail.com",   // ⚠️ remplace par ton Gmail
+      pass: "jqkx kfnv azly tmcw",  // ⚠️ mot de passe d'application Gmail (16 caractères)
+    },
+  });
+
+  // 3. Préparer le logo en pièce jointe (comme la capture)
+const logoPath = path.join(process.cwd(), "src/assets/logo.png");
+
+  // 4. Construire l’email HTML avec cid
+  const mailOptions = {
+    from: '"eMart Support" <tonemail@gmail.com>',
+    to: email,
+    subject: "Your eMart Temporary Password",
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #ddd; border-radius: 8px; padding: 20px; background-color: #fef6f3;">
+        <div style="text-align:center; margin-bottom:15px;">
+          <img src="cid:EMARTLOGO" style="width:120px; height:auto;" />
+        </div>
+        <h1 style="color:#EE6B33; text-align:center;">Your Temporary Password</h1>
+        <p style="text-align:center;">Use this temporary password to log in and change it immediately:</p>
+        <p style="font-size:20px; font-weight:bold; text-align:center;">${tempPassword}</p>
+        <p style="color:#777; text-align:center;">This password expires in 30 minutes.</p>
+      </div>
+    `,
+    attachments: [
+      {
+        filename: "logo.png",
+        path: logoPath,
+        cid: "EMARTLOGO" // 👈 identique à src="cid:EMARTLOGO"
+      }
+    ]
+  };
+
+  // 5. Envoyer l’email
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    console.log("📧 Email sent:", info.messageId);
+  } catch (err) {
+    console.error("❌ Failed to send email:", err);
+    throw new InternalServerErrorException("Email not sent");
+  }
+
+  console.log("✅ Temp password generated:", tempPassword);
+  console.log("🔒 Temp password hash generated:", tempHash);
+}
 
   async verifyTempPassword(email: string, tempPassword: string): Promise<boolean> {
     try {

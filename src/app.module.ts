@@ -5,13 +5,14 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { UserModule } from './user/user.module';
 import { MssqlModule } from './DataBasemssql/mssql.module';
+import { ItemsModule } from './items/items.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     MongooseModule.forRoot(process.env.MONGO_URI || ''),
     MssqlModule, // <-- ajout
-    UserModule,
+    UserModule, ItemsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
