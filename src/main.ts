@@ -1,31 +1,19 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { ValidationPipe } from '@nestjs/common';
+import { AppConfig } from './config/app.config';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // CORS (useful for web & local testing)
-  app.enableCors({
-    origin: true,
-    credentials: true,
-  });
+  // CORS
+  app.enableCors(AppConfig.cors);
 
   // Validation
-  app.useGlobalPipes(
-  new ValidationPipe({
-    whitelist: true,
-    forbidNonWhitelisted: true, // rejette les champs inconnus
-    transform: true,
-    stopAtFirstError: true,     // message plus clair côté client
-  }),
-);
+  app.useGlobalPipes(AppConfig.validationPipe);
 
-  const PORT = Number(process.env.PORT) || 3002;
+  // Start server
+  await app.listen(AppConfig.port, AppConfig.host);
 
-  // ⬅️ IMPORTANT: bind to 0.0.0.0 so Android emulator can reach it via 10.0.2.2
-  await app.listen(PORT, '0.0.0.0');
-
-  console.log(`✅ API listening on http://0.0.0.0:${PORT}`);
+  console.log(`✅ API listening on http://${AppConfig.host}:${AppConfig.port}`);
 }
 bootstrap();
