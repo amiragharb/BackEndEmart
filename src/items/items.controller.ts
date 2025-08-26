@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Param, Inject } from '@nestjs/common';
+import { Controller, Get, Query, Param, Inject, Post, Body } from '@nestjs/common';
 import { ItemsService } from './items.service';
 import { ConnectionPool } from 'mssql';
 
@@ -36,4 +36,24 @@ export class ItemsController {
   async getOne(@Param('id') id: string) {
     return this.itemsService.findOne(Number(id));
   }
+
+  @Post(':id/ratings')
+  async rateProduct(
+    @Param('id') id: string,
+    @Body() body: { userId: number; rate: number; comment?: string; recommend?: boolean },
+  ) {
+    return this.itemsService.rateProduct(
+      Number(id),
+      body.userId,
+      body.rate,
+      body.comment,
+      body.recommend ?? false,
+    );
+  }
+@Get(':id/ratings')
+async getRatings(@Param('id') id: string) {
+  return this.itemsService.getRatings(Number(id));
+}
+
+
 }
