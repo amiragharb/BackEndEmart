@@ -55,5 +55,13 @@ async getRatings(@Param('id') id: string) {
   return this.itemsService.getRatings(Number(id));
 }
 
+@Get(':medicineId/datasheets')
+async getDatasheets(@Param('medicineId') medicineId: string) {
+  return this.itemsService.findDatasheets(Number(medicineId));
+}
+@Get(':id/videos')
+async getVideos(@Param('id') id: string) {
+  return this.itemsService.findVideos(Number(id));
+}
 
 }
