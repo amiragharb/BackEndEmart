@@ -44,7 +44,8 @@ export class UserService {
   constructor(
     private readonly jwtService: JwtService,
     // 👇 vient du MssqlModule (provider 'MSSQL_CONNECTION')
-  @Inject('MSSQL_CONNECTION') private readonly db: ConnectionPool,  // 👈
+      @Inject('MSSQL_SETTINGS_CONNECTION') private readonly dbSettings: ConnectionPool, // TEST
+  // 👈
   ) {}
   
   // -------------------- helpers --------------------
@@ -54,9 +55,12 @@ export class UserService {
   private isEgyptPhone(s: string) {
     return /^(?:\+20|0)(?:10|11|12|15)\d{8}$/.test(s);
   }
-  private roleFromSellerId(sellerId: number | null | undefined) {
-    return sellerId === 1 ? 'admin' : 'client';
-  }
+ private roleFromSellerId(sellerId: number | null | undefined, isAdmin?: boolean) {
+  if (isAdmin) return 'admin';
+  if (sellerId && sellerId > 0) return 'seller';
+  return 'client';
+}
+z
   private nowPlusMinutes(min: number) {
     const d = new Date();
     d.setMinutes(d.getMinutes() + min);
@@ -90,15 +94,14 @@ export class UserService {
         FROM dbo.tbl_Users
         WHERE Mobile = @identifier
       `;
-    const r: IResult<SqlUser> = await this.db
-      .request()
+    const r: IResult<SqlUser> = await this.dbSettings
       .input('identifier', sql.NVarChar, identifier)
       .query(q);
     return r.recordset[0] ?? null;
   }
 
   private async findUserByEmail(email: string): Promise<SqlUser | null> {
-    const r: IResult<SqlUser> = await this.db
+    const r: IResult<SqlUser> = await this.dbSettings
       .request()
       .input('email', sql.NVarChar, email)
       .query(`
@@ -110,7 +113,7 @@ export class UserService {
   }
 
   private async findUserById(userId: number): Promise<SqlUser | null> {
-    const r: IResult<SqlUser> = await this.db
+    const r: IResult<SqlUser> = await this.dbSettings
       .request()
       .input('id', sql.Int, userId)
       .query(`
@@ -121,7 +124,7 @@ export class UserService {
   }
 
   private async ensureAuthExtras(userId: number): Promise<void> {
-    const res = await this.db
+    const res = await this.dbSettings
       .request()
       .input('id', sql.Int, userId)
       .query(`
@@ -130,15 +133,14 @@ export class UserService {
       `);
     const n = res.recordset?.[0]?.n ?? 0;
     if (n === 0) {
-      await this.db.request().input('id', sql.Int, userId).query(`
+      await this.dbSettings.request().input('id', sql.Int, userId).query(`
         INSERT INTO dbo.UserAuthExtras (UserID) VALUES (@id);
       `);
     }
   }
 
   private async getAuthExtras(userId: number): Promise<SqlAuthExtras | null> {
-    const r: IResult<SqlAuthExtras> = await this.db
-      .request()
+    const r: IResult<SqlAuthExtras> = await this.dbSettings
       .input('id', sql.Int, userId)
       .query(`
         SELECT UserID, otp, otpExpires, tempPassword, tempPasswordExpires
@@ -148,7 +150,7 @@ export class UserService {
   }
 
   private async upsertToken(userId: number, token: string, expiresAt: Date): Promise<void> {
-    await this.db
+    await this.dbSettings
       .request()
       .input('uid', sql.Int, userId)
       .input('tk', sql.NVarChar, token)
@@ -160,7 +162,7 @@ export class UserService {
   }
 
   private async deleteToken(token: string): Promise<number> {
-    const res = await this.db
+    const res = await this.dbSettings
       .request()
       .input('tk', sql.NVarChar, token)
       .query(`DELETE FROM dbo.UserTokens WHERE token = @tk; SELECT @@ROWCOUNT AS affected;`);
@@ -176,7 +178,7 @@ export class UserService {
   if (exists) throw new BadRequestException('Email already in use.');
 
   // 1bis) Vérifier unicité mobile côté client
-  const mobileUsed = await this.db.request()
+  const mobileUsed = await this.dbSettings.request()
     .input('Mobile', sql.NVarChar, dto.mobile.trim())
     .query(`
       SELECT TOP 1 1
@@ -194,23 +196,54 @@ export class UserService {
   const hashed = await bcrypt.hash(dto.password, 10);
 
   // 3) Insertion utilisateur
-  const insertRes = await this.db
-    .request()
-    .input('Email', sql.NVarChar, email)
-    .input('FirstName', sql.NVarChar, dto.firstName.trim())
-    .input('LastName', sql.NVarChar, dto.lastName.trim())
-    .input('Mobile', sql.NVarChar, dto.mobile.trim())
-    .input('BirthDate', sql.DateTime2, dto.dateOfBirth ? new Date(dto.dateOfBirth) : null)
-    .input('Password', sql.NVarChar, hashed)
-    .query(`
-      INSERT INTO dbo.tbl_Users (
-        Email, FirstName, LastName, Mobile, BirthDate, Password, IsActive, CreationDate
-      )
-      VALUES (
-        @Email, @FirstName, @LastName, @Mobile, @BirthDate, @Password, 1, SYSDATETIME()
-      );
-      SELECT SCOPE_IDENTITY() AS NewId;
-    `);
+  const insertRes = await this.dbSettings
+  .request()
+  .input('Email', sql.NVarChar, email)
+  .input('FirstName', sql.NVarChar, dto.firstName.trim())
+  .input('LastName', sql.NVarChar, dto.lastName.trim())
+  .input('Mobile', sql.NVarChar, dto.mobile.trim())
+  .input('BirthDate', sql.DateTime2, dto.dateOfBirth ? new Date(dto.dateOfBirth) : null)
+  .input('Password', sql.NVarChar, hashed)
+  // Valeurs par défaut obligatoires
+  .input('CountryID', sql.Int, 1)
+  .input('IsServiceCashed', sql.Bit, 0)
+  .input('IsGooglePlusAccount', sql.Bit, 0)
+  .input('IsFacebookAccount', sql.Bit, 0)
+  .input('IsMobileValidate', sql.Bit, 0)
+  .input('CreatorUserID', sql.Int, 1) // user système
+  .input('IsDeleted', sql.Bit, 0)
+  .input('IsOnline', sql.Bit, 0)
+  .input('IsBusy', sql.Bit, 0)
+  .input('IsAdmin', sql.Bit, 0)
+  .input('Ranking', sql.Decimal(5,2), 5.00)
+  .input('UserTypeID', sql.Int, 1)
+  .input('LanguageID', sql.Int, 1)
+  .input('LoginCodeCount', sql.Int, 0)
+  .input('UseMobileForDelivery', sql.Bit, 0)
+  .input('IsSales', sql.Bit, 0)
+  .input('IsFacebookLogin', sql.Bit, 0)
+  .input('IsGoogleLogin', sql.Bit, 0)
+  .input('ModifiedUserID', sql.Int, 1) // ✅ ajout obligatoire
+
+  .query(`
+    INSERT INTO dbo.tbl_Users (
+      Email, FirstName, LastName, Mobile, BirthDate, Password,
+      IsActive, CreationDate, CountryID, IsServiceCashed,
+      IsGooglePlusAccount, IsFacebookAccount, IsMobileValidate, CreatorUserID,
+      IsDeleted, IsOnline, IsBusy, IsAdmin, Ranking, UserTypeID, LanguageID,
+      LoginCodeCount, UseMobileForDelivery, IsSales, IsFacebookLogin, IsGoogleLogin,ModifiedUserID
+    )
+    VALUES (
+      @Email, @FirstName, @LastName, @Mobile, @BirthDate, @Password,
+      1, SYSDATETIME(), @CountryID, @IsServiceCashed,
+      @IsGooglePlusAccount, @IsFacebookAccount, @IsMobileValidate, @CreatorUserID,
+      @IsDeleted, @IsOnline, @IsBusy, @IsAdmin, @Ranking, @UserTypeID, @LanguageID,
+      @LoginCodeCount, @UseMobileForDelivery, @IsSales, @IsFacebookLogin, @IsGoogleLogin, @ModifiedUserID
+    );
+    SELECT SCOPE_IDENTITY() AS NewId;
+  `);
+
+
 
   const newId: number = Number(insertRes.recordset?.[0]?.NewId);
   if (!newId) throw new InternalServerErrorException('Failed to create user');
@@ -288,7 +321,7 @@ export class UserService {
         ok = await bcrypt.compare(pwd, extras.tempPassword);
         if (ok) {
           // Optionnel: invalider le mot de passe temporaire après usage
-          await this.db.request()
+          await this.dbSettings.request()
             .input('id', sql.Int, user.UserID)
             .query(`UPDATE dbo.UserAuthExtras SET tempPassword=NULL, tempPasswordExpires=NULL WHERE UserID=@id`);
         }
@@ -342,7 +375,7 @@ export class UserService {
     const mobile = dto.mobile?.trim() ?? existing.Mobile ?? '';
     const birth = dto.dateOfBirth ? new Date(dto.dateOfBirth) : existing.BirthDate;
 
-    await this.db
+    await this.dbSettings
       .request()
       .input('Email', sql.NVarChar, email)
       .input('FirstName', sql.NVarChar, first)
@@ -381,7 +414,7 @@ export class UserService {
     }
 
     const hashed = await bcrypt.hash(newPassword, 10);
-    await this.db
+    await this.dbSettings
       .request()
       .input('pwd', sql.NVarChar, hashed)
       .input('id', sql.Int, userId)
@@ -499,7 +532,7 @@ async forgetPassword(email: string): Promise<void> {
   const exp = this.nowPlusMinutes(30);
 
   await this.ensureAuthExtras(user.UserID);
-  await this.db
+  await this.dbSettings
     .request()
     .input("id", sql.Int, user.UserID)
     .input("tp", sql.NVarChar, tempHash)
@@ -620,18 +653,53 @@ async loginWithIdToken(idToken: string, provider: 'google' | 'facebook') {
 
   // 🔹 Si l’utilisateur n’existe pas → création
   if (!user) {
-    const insertRes = await this.db
-      .request()
-      .input('Email', sql.NVarChar, email)
-      .input('FirstName', sql.NVarChar, payload.given_name || '')
-      .input('LastName', sql.NVarChar, payload.family_name || '')
-      .input('IsActive', sql.Bit, 1)
-      .input('IsGooglePlusAccount', sql.Bit, 1)
-      .query(`
-        INSERT INTO dbo.tbl_Users (Email, FirstName, LastName, IsActive, IsGooglePlusAccount, CreationDate)
-        VALUES (@Email, @FirstName, @LastName, @IsActive, @IsGooglePlusAccount, SYSDATETIME());
-        SELECT SCOPE_IDENTITY() AS NewId;
-      `);
+    const insertRes = await this.dbSettings
+  .request()
+  .input('Email', sql.NVarChar, email)
+  .input('FirstName', sql.NVarChar, payload.given_name || '')
+  .input('LastName', sql.NVarChar, payload.family_name || '')
+  .input('IsActive', sql.Bit, 1)
+  .input('IsGooglePlusAccount', sql.Bit, 1) // login Google
+  .input('IsFacebookAccount', sql.Bit, 0)
+  .input('SellerID', sql.Int, null)
+  .input('CountryID', sql.Int, 1)
+  .input('IsServiceCashed', sql.Bit, 0)
+  .input('IsMobileValidate', sql.Bit, 0)
+  .input('CreatorUserID', sql.Int, 1)
+  .input('IsDeleted', sql.Bit, 0)
+  .input('IsOnline', sql.Bit, 0)
+  .input('IsBusy', sql.Bit, 0)
+  .input('IsAdmin', sql.Bit, 0)
+  .input('Ranking', sql.Decimal(5, 2), 5.00)
+  .input('UserTypeID', sql.Int, 1)
+  .input('LanguageID', sql.Int, 1)
+  .input('LoginCodeCount', sql.Int, 0)
+  .input('UseMobileForDelivery', sql.Bit, 0)
+  .input('IsSales', sql.Bit, 0)
+  .input('IsFacebookLogin', sql.Bit, 0)
+  .input('IsGoogleLogin', sql.Bit, 1)
+  .input('ModifiedUserID', sql.Int, 1) // ✅ ajout obligatoire
+ // ✅ très important
+  .query(`
+    INSERT INTO dbo.tbl_Users (
+      Email, FirstName, LastName,
+      IsActive, IsGooglePlusAccount, IsFacebookAccount,
+      CreationDate, SellerID, CountryID, IsServiceCashed, IsMobileValidate,
+      CreatorUserID, IsDeleted, IsOnline, IsBusy, IsAdmin, Ranking,
+      UserTypeID, LanguageID, LoginCodeCount, UseMobileForDelivery,
+      IsSales, IsFacebookLogin, IsGoogleLogin , ModifiedUserID
+    )
+    VALUES (
+      @Email, @FirstName, @LastName,
+      @IsActive, @IsGooglePlusAccount, @IsFacebookAccount,
+      SYSDATETIME(), @SellerID, @CountryID, @IsServiceCashed, @IsMobileValidate,
+      @CreatorUserID, @IsDeleted, @IsOnline, @IsBusy, @IsAdmin, @Ranking,
+      @UserTypeID, @LanguageID, @LoginCodeCount, @UseMobileForDelivery,
+      @IsSales, @IsFacebookLogin, @IsGoogleLogin , @ModifiedUserID
+    );
+    SELECT SCOPE_IDENTITY() AS NewId;
+  `);
+
 
     const newId = Number(insertRes.recordset?.[0]?.NewId);
     user = await this.findUserById(newId);
@@ -652,13 +720,11 @@ async loginWithIdToken(idToken: string, provider: 'google' | 'facebook') {
 
   const access_token = this.jwtService.sign(payloadJwt, { expiresIn: '1h' });
 
-  // 🔹 Log pour debug
   console.log('[JWT SIGNED]', access_token);
 
-  // 🔹 Stockage dans UserTokens EXACTEMENT comme JwtStrategy le lit
+  // 🔹 Stockage dans UserTokens
   await this.upsertToken(user.UserID, access_token, this.nowPlusMinutes(60));
 
-  // 🔹 Retour au client (Flutter)
   return access_token; // 👈 retourne juste le JWT brut
 }
 

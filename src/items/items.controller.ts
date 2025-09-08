@@ -6,7 +6,7 @@ import { ConnectionPool } from 'mssql';
 export class ItemsController {
   constructor(
     private readonly itemsService: ItemsService,
-    @Inject('MSSQL_CONNECTION') private readonly db: ConnectionPool,
+    @Inject('MSSQL_SETTINGS_CONNECTION') private readonly db: ConnectionPool,
   ) {}
 
   // 🔹 GET /items?search=shoe&category=Fashion&sort=PriceAsc&limit=10

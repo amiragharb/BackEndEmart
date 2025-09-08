@@ -13,7 +13,6 @@ interface FindOptions {
 @Injectable()
 export class ItemsService {
   constructor(
-    @Inject('MSSQL_CONNECTION') private readonly db: ConnectionPool,
     @Inject('MSSQL_SETTINGS_CONNECTION') private readonly dbSettings: ConnectionPool, // TEST
 
   ) {}
@@ -187,7 +186,7 @@ async findCategories() {
     ORDER BY SortOrder
   `;
 
-  const r: IResult<any> = await this.db.request().query(query);
+  const r: IResult<any> = await this.dbSettings.request().query(query);
 
   if (!r.recordset || r.recordset.length === 0) {
     return [];

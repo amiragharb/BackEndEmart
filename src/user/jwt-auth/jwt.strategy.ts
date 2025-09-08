@@ -6,7 +6,7 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
-    @Inject('MSSQL_CONNECTION') private readonly db: ConnectionPool, // 👈
+    @Inject('MSSQL_SETTINGS_CONNECTION') private readonly db: ConnectionPool, // 👈
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
