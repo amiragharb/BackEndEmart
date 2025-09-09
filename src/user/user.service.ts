@@ -95,6 +95,7 @@ z
         WHERE Mobile = @identifier
       `;
     const r: IResult<SqlUser> = await this.dbSettings
+      .request()
       .input('identifier', sql.NVarChar, identifier)
       .query(q);
     return r.recordset[0] ?? null;
