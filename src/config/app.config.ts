@@ -13,6 +13,6 @@ export const AppConfig = {
     stopAtFirstError: true,     // clearer error message on client side
   }),
 
-  port: Number(process.env.PORT) || 3002,
+  port: Number(process.env.PORT) || 3001,
   host: '0.0.0.0', // required so Android Emulator can reach it via 10.0.2.2
 };

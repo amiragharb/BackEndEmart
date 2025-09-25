@@ -109,114 +109,96 @@ async findAll(options: FindOptions = {}) {
 
 
 async findOne(medicineId: number) {
-  const r: IResult<any> = await this.dbSettings
-    .request()
-    .input('id', sql.Int, medicineId)
-    .query(`
-      SELECT TOP (1)
-        si.SellerItemID,
-        si.MedicineID,
-        si.SellerID,
-        si.StockQuantity,
-        si.Price,
-        si.PriceWas,
-        si.IsOutOfStock,
-        si.UserViewCount,
+    if (!medicineId) return null;
 
-        m.NameEn,
-        m.NameAr,
+    const r: IResult<any> = await this.dbSettings
+      .request()
+      .input('id', sql.Int, medicineId)
+      .query(`
+        SELECT TOP (1)
+          si.SellerItemID, si.MedicineID, si.SellerID, si.StockQuantity,
+          si.Price, si.PriceWas, si.IsOutOfStock, si.UserViewCount,
+          m.NameEn, m.NameAr,
+          MAX(CONVERT(NVARCHAR(MAX), m.Indications)) AS Indications,
+          MAX(CONVERT(NVARCHAR(MAX), m.PamphletEn)) AS PamphletEn,
+          MAX(CONVERT(NVARCHAR(MAX), m.PamphletAr)) AS PamphletAr,
+          MAX(CONVERT(NVARCHAR(MAX), m.PackDescription)) AS PackDescription,
+          MAX(CONVERT(NVARCHAR(MAX), m.YoutubeURL)) AS YoutubeURL,
+          m.ItemBrandID, m.OfficialPrice,
+          MAX(m.PhotoFileName) AS MedicinePhoto_Main,
+          STRING_AGG(mp.PhotoFileName, ',') AS MedicinePhoto_Extra_List,
+          ISNULL(AVG(r.Rate), 0) AS AvgRating,
+          COUNT(r.Rate) AS TotalRatings
+        FROM dbo.tbl_SellerItems si
+        INNER JOIN dbo.lkp_Medicines m ON si.MedicineID = m.MedicineID
+        LEFT JOIN dbo.lkp_MedicinePhotos mp ON si.MedicineID = mp.MedicineID AND mp.IsDeleted = 0
+        LEFT JOIN dbo.tbl_OffersComments r ON si.SellerItemID = r.SellerItemID AND r.IsDeleted = 0
+        WHERE si.MedicineID = @id AND si.IsDeleted = 0 AND m.IsDeleted = 0
+        GROUP BY si.SellerItemID, si.MedicineID, si.SellerID, si.StockQuantity, si.Price, 
+                 si.PriceWas, si.IsOutOfStock, si.UserViewCount, m.NameEn, m.NameAr, m.ItemBrandID, m.OfficialPrice
+      `);
 
-        -- Descriptions
-        MAX(CONVERT(NVARCHAR(MAX), m.Indications))     AS Indications,
-        MAX(CONVERT(NVARCHAR(MAX), m.PamphletEn))      AS PamphletEn,
-        MAX(CONVERT(NVARCHAR(MAX), m.PamphletAr))      AS PamphletAr,
-        MAX(CONVERT(NVARCHAR(MAX), m.PackDescription)) AS PackDescription,
-        MAX(CONVERT(NVARCHAR(MAX), m.YoutubeURL))      AS YoutubeURL,
-
-        m.ItemBrandID,
-        m.OfficialPrice,
-
-        -- Photos
-        MAX(m.PhotoFileName) AS MedicinePhoto_Main,
-        STRING_AGG(mp.PhotoFileName, ',') AS MedicinePhoto_Extra_List,
-
-        ISNULL(AVG(r.Rate), 0) AS AvgRating,
-        COUNT(r.Rate)          AS TotalRatings
-
-      FROM dbo.tbl_SellerItems si
-      INNER JOIN dbo.lkp_Medicines m ON si.MedicineID = m.MedicineID
-      LEFT JOIN dbo.lkp_MedicinePhotos mp
-             ON si.MedicineID = mp.MedicineID AND mp.IsDeleted = 0
-      LEFT JOIN dbo.tbl_OffersComments r
-             ON si.SellerItemID = r.SellerItemID AND r.IsDeleted = 0
-
-      WHERE si.MedicineID = @id  -- ⚡ ici au lieu de SellerItemID
-        AND si.IsDeleted = 0 
-        AND m.IsDeleted = 0
-
-      GROUP BY 
-        si.SellerItemID, si.MedicineID, si.SellerID, si.StockQuantity, si.Price, 
-        si.PriceWas, si.IsOutOfStock, si.UserViewCount,
-        m.NameEn, m.NameAr, m.ItemBrandID, m.OfficialPrice
-    `);
-
-  const item = r.recordset[0];
-  if (!item) {
-    console.warn(`⚠️ [findOne] Aucun produit trouvé pour MedicineID = ${medicineId}`);
-    return null;
+    return r.recordset[0] ?? null;
   }
-
-  return item;
-}
 
 
 
   // items.service.ts
 async findCategories() {
-  const query = `
-    SELECT 
-      DrugClassificationTypeID,
-      NameEn,
-      NameAr,
-      ShowInMenu,
-      ShowInHome,
-      SortOrder
+  const catQ = `
+    SELECT DrugClassificationTypeID, NameEn, NameAr, ShowInMenu, ShowInHome, SortOrder
     FROM dbo.lkp_DrugClassificationTypes
     WHERE IsDeleted = 0
-    ORDER BY SortOrder
-  `;
+    ORDER BY SortOrder`;
+  const r = await this.dbSettings.request().query(catQ);
+  if (!r.recordset?.length) return [];
 
-  const r: IResult<any> = await this.dbSettings.request().query(query);
+  const settingsQ = `
+    SELECT ItemName, DisplayName, ItemValue
+    FROM dbo.tbl_Settings
+    WHERE IsDeleted = 0 AND (ItemName LIKE 'Cat_%' OR DisplayName LIKE 'Cat_%'
+         OR ItemName IN ('CategoryImagesFolderDownload','CategoryImagesFolderUpload'))`;
+  const s = await this.dbSettings.request().query(settingsQ);
 
-  if (!r.recordset || r.recordset.length === 0) {
-    return [];
+  // ⚠️ Override : on impose Brand_images (DB est fausse)
+const BASE_URL = 'https://test.itspark-eg.com/Uploads_emart/Brand_images/';
+
+const buildUrl = (val?: string | null) => {
+  if (!val) return null;
+  if (/^https?:\/\//i.test(val)) return val.trim();
+  const clean = val.trim().replace(/\\/g, '/').split('/').map(encodeURIComponent).join('/');
+  return BASE_URL + clean;
+};
+
+  const toKey = (v?: string) =>
+    (v ?? '').trim().toUpperCase().replace(/\s+/g, '');
+
+  const map = new Map<string, string>();
+  for (const row of s.recordset) {
+    const k1 = toKey(row.ItemName);
+    const k2 = toKey(row.DisplayName);
+    if (k1.startsWith('CAT_')) map.set(k1, row.ItemValue?.trim() ?? '');
+    if (k2.startsWith('CAT_')) map.set(k2, row.ItemValue?.trim() ?? '');
   }
 
-// Maintenant récupérer les images depuis TEST_eCommerce
-const settingsQuery = `
-  SELECT ItemName, DisplayName, ItemValue
-  FROM dbo.tbl_Settings
-  WHERE isDeleted = 0
-`;
-const s: IResult<any> = await this.dbSettings.request().query(settingsQuery);
+  
 
-// On mappe les catégories + image correspondante
-return r.recordset.map(row => {
-  const img = s.recordset.find(
-    (x) => x.DisplayName === `Cat_${row.DrugClassificationTypeID}`
-  );
+  return r.recordset.map((row: any) => {
+    const idStr = String(row.DrugClassificationTypeID).trim();
+    const keys = [toKey(`Cat_${idStr}`), toKey(`Cat_${idStr.padStart(5,'0')}`)];
+    let val: string | undefined;
+    for (const k of keys) if (map.has(k)) { val = map.get(k); break; }
 
-  return {
-    id: row.DrugClassificationTypeID,
-    nameEn: row.NameEn,
-    nameAr: row.NameAr,
-    showInMenu: row.ShowInMenu,
-    showInHome: row.ShowInHome,
-    photoUrl: img ? img.ItemValue : null,  // ✅ ajoute l’URL si trouvée
-  };
-});
+    return {
+      id: row.DrugClassificationTypeID,
+      nameEn: row.NameEn?.trim() || '',
+      nameAr: row.NameAr?.trim() || '',
+      showInMenu: !!row.ShowInMenu,
+      showInHome: row.ShowInHome != null ? !!row.ShowInHome : false,
+      photoUrl: buildUrl(val), // null si pas de mapping
+    };
+  });
 }
-
 
 async testSettings() {
   try {
@@ -381,4 +363,88 @@ async findVideos(medicineId: number) {
       createdAt: row.CreationDate,
     };
   });
-}}
+
+}
+
+// items.service.ts
+async getTopBrandsOrCategories(limit: number = 6) {
+  console.log('🚀 [getTopBrandsOrCategories] Called with limit =', limit);
+
+  const request = this.dbSettings.request();
+
+  // Vérifier s'il y a des ventes valides
+  const checkQuery = `
+    SELECT COUNT(1) AS TotalOrders
+    FROM dbo.tbl_OrderItems oi
+    INNER JOIN dbo.tbl_Orders o ON oi.OrderID = o.OrderID AND o.IsDeleted = 0
+    INNER JOIN dbo.lkp_Medicines m ON oi.MedicineID = m.MedicineID AND m.IsDeleted = 0
+    WHERE oi.IsDeleted = 0
+  `;
+  const checkResult = await request.query(checkQuery);
+  const totalOrders = checkResult.recordset[0]?.TotalOrders || 0;
+  console.log('📊 Total valid order items:', totalOrders);
+
+  let brands: any[] = [];
+
+  if (totalOrders > 0) {
+    // Top brands via commandes
+    const topBrandsQuery = `
+      SELECT TOP (@Limit)
+        b.ItemBrandID, b.NameEn, b.NameAr,
+        SUM(oi.Quantity) AS TotalQuantitySold
+      FROM dbo.tbl_OrderItems oi
+      INNER JOIN dbo.tbl_Orders o ON oi.OrderID = o.OrderID AND o.IsDeleted = 0
+      INNER JOIN dbo.lkp_Medicines m ON oi.MedicineID = m.MedicineID AND m.IsDeleted = 0
+      INNER JOIN dbo.lkp_ItemBrands b ON m.ItemBrandID = b.ItemBrandID
+      WHERE oi.IsDeleted = 0
+      GROUP BY b.ItemBrandID, b.NameEn, b.NameAr
+      ORDER BY SUM(oi.Quantity) DESC
+    `;
+    request.input("Limit", sql.Int, limit);
+    const topResult = await request.query(topBrandsQuery);
+    brands = topResult.recordset;
+    console.log('📦 [Top Brands Result] →', brands);
+  }
+
+  if (!brands || brands.length === 0) {
+    // Fallback: prendre toutes les brands
+    console.log('⚠️ No top brands found, fetching all brands...');
+    const brandsQuery = `
+      SELECT TOP (@Limit) ItemBrandID, NameEn, NameAr
+      FROM dbo.lkp_ItemBrands
+      WHERE IsDeleted = 0
+      ORDER BY NameEn
+    `;
+    const brandsResult = await this.dbSettings.request()
+      .input("Limit", sql.Int, limit)
+      .query(brandsQuery);
+    brands = brandsResult.recordset;
+    console.log('📦 [All Brands Result] →', brands);
+  }
+
+  // Ajouter images
+  const settingsQuery = `
+    SELECT DisplayName, ItemValue
+    FROM dbo.tbl_Settings
+    WHERE IsDeleted = 0 AND DisplayName LIKE 'Brand_%'
+  `;
+  const settingsResult: IResult<any> = await this.dbSettings.request().query(settingsQuery);
+
+  const brandsWithImages = brands.map(brand => {
+    const imgSetting = settingsResult.recordset.find(s => s.DisplayName === `Brand_${brand.ItemBrandID}`);
+    return {
+      ...brand,
+      photoUrl: imgSetting?.ItemValue ?? null,  // <-- fallback null si pas d'image
+    };
+  });
+
+  // Fallback final vers catégories si aucun brand trouvé ou image
+  if (!brandsWithImages || brandsWithImages.length === 0) {
+    console.log('⚠️ No brands with images, fetching categories...');
+    return this.findCategories();
+  }
+
+  return brandsWithImages;
+}
+
+}

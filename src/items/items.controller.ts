@@ -19,7 +19,15 @@ export class ItemsController {
   ) {
     return this.itemsService.findAll({ search, category, sort, limit });
   }
-
+  
+@Get('top-brands')
+async getTopBrands(@Query('limit') limit?: string) {
+  const topLimit = limit ? parseInt(limit, 10) : 6;
+  console.log('🚀 [Controller] GET /items/top-brands called with limit =', topLimit);
+  const brands = await this.itemsService.getTopBrandsOrCategories(topLimit);
+  console.log('🚀 [Controller] brands =', brands);
+  return { data: brands };
+}
   @Get('categories')
   async getCategories() {
     return this.itemsService.findCategories();
@@ -63,5 +71,7 @@ async getDatasheets(@Param('medicineId') medicineId: string) {
 async getVideos(@Param('id') id: string) {
   return this.itemsService.findVideos(Number(id));
 }
+
+
 
 }
